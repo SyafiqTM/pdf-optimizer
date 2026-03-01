@@ -1,17 +1,24 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
 import uuid
 import subprocess
 import shutil
+import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
 
 app = FastAPI()
 
-# Allow React dev server
+# Allow React dev server and production frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://pdf-optimizer-nand.vercel.app",
+        "https://*.vercel.app"  # Allow all Vercel preview deployments
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,6 +26,39 @@ app.add_middleware(
 
 TMP_DIR = "tmp"
 os.makedirs(TMP_DIR, exist_ok=True)
+
+# Cleanup configuration
+CLEANUP_INTERVAL = 300  # Check every 5 minutes
+FILE_MAX_AGE = 300  # 5 minutes in seconds
+
+
+async def cleanup_old_files():
+    """Background task to remove files older than 5 minutes"""
+    while True:
+        try:
+            now = datetime.now()
+            cutoff_time = now - timedelta(seconds=FILE_MAX_AGE)
+            
+            for file_path in Path(TMP_DIR).glob("*"):
+                if file_path.is_file():
+                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    if file_mtime < cutoff_time:
+                        try:
+                            file_path.unlink()
+                            print(f"Cleaned up old file: {file_path.name}")
+                        except Exception as e:
+                            print(f"Failed to delete {file_path.name}: {e}")
+        except Exception as e:
+            print(f"Cleanup task error: {e}")
+        
+        await asyncio.sleep(CLEANUP_INTERVAL)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background cleanup task"""
+    asyncio.create_task(cleanup_old_files())
+    print(f"✓ Background cleanup task started (files deleted after {FILE_MAX_AGE}s)")
 
 
 def check_dependencies():
@@ -53,8 +93,22 @@ def run_cmd(cmd: list[str]):
         raise Exception(f"Executable '{cmd[0]}' not found. Please install it first.")
 
 
+def cleanup_job_files(job_id: str):
+    """Remove all files associated with a job ID"""
+    try:
+        for file_path in Path(TMP_DIR).glob(f"{job_id}-*"):
+            try:
+                file_path.unlink()
+                print(f"Cleaned up: {file_path.name}")
+            except Exception as e:
+                print(f"Failed to delete {file_path.name}: {e}")
+    except Exception as e:
+        print(f"Cleanup error for job {job_id}: {e}")
+
+
+
 @app.post("/optimize")
-async def optimize_pdf(file: UploadFile = File(...)):
+async def optimize_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     # Check dependencies first
     missing = check_dependencies()
     if missing:
@@ -105,6 +159,10 @@ async def optimize_pdf(file: UploadFile = File(...)):
         f"-sOutputFile={output_path}",
         qpdf_path
     ])
+
+    # Schedule cleanup after response is sent
+    if background_tasks:
+        background_tasks.add_task(cleanup_job_files, job_id)
 
     return FileResponse(
         output_path,
