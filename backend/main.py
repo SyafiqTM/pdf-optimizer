@@ -24,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TMP_DIR = "tmp"
+TMP_DIR = os.environ.get("TMP_DIR", "/tmp" if os.name != 'nt' else "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
 # Cleanup configuration
