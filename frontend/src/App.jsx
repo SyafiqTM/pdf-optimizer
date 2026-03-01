@@ -6,8 +6,23 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({});
   const [results, setResults] = useState([]);
+  const [uploadError, setUploadError] = useState(null);
 
-  const onDrop = useCallback((acceptedFiles) => {
+  const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB in bytes
+
+  const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
+    setUploadError(null);
+    
+    if (rejectedFiles && rejectedFiles.length > 0) {
+      const rejection = rejectedFiles[0];
+      if (rejection.errors[0]?.code === 'file-too-large') {
+        setUploadError(`File too large. Maximum size is 4MB due to serverless platform limits.`);
+      } else {
+        setUploadError(rejection.errors[0]?.message || 'File rejected');
+      }
+      return;
+    }
+    
     if (!acceptedFiles || acceptedFiles.length === 0) return;
     
     setFiles(acceptedFiles.slice(0, 2));
@@ -20,7 +35,8 @@ function App() {
     accept: {
       'application/pdf': ['.pdf']
     },
-    maxFiles: 2
+    maxFiles: 2,
+    maxSize: MAX_FILE_SIZE
   });
 
   async function optimizeFile(file, index) {
@@ -43,7 +59,9 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Network response was not ok');
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.detail || `Error: ${response.status} ${response.statusText}`;
+        throw new Error(errorMessage);
       }
       
       const blob = await response.blob();
@@ -66,6 +84,7 @@ function App() {
     setLoading(true); 
     setResults([]);
     setProgress({});
+    setUploadError(null);
 
     const optimizedResults = [];
     for (let i = 0; i < files.length; i++) {
@@ -98,9 +117,15 @@ function App() {
           <p className="text-center text-slate-300">
             {files.length > 0
               ? `Selected ${files.length} file(s): ${files.map(f => f.name).join(', ')}`
-              : "Drag & drop PDFs here, or click to select (max 2)"}
+              : "Drag & drop PDFs here, or click to select (max 2, 4MB each)"}
           </p>
         </div>
+
+        {uploadError && (
+          <div className="mt-4 p-3 bg-red-600 rounded-lg text-sm text-center">
+            {uploadError}
+          </div>
+        )}
 
         {files.length > 0 && loading && (
           <div className="mt-4 space-y-3">
@@ -142,8 +167,11 @@ function App() {
                   Download {result.filename}
                 </a>
               ) : (
-                <div key={index} className="block text-center rounded-xl bg-red-600 px-4 py-3 font-semibold">
-                  Failed: {result.filename}
+                <div key={index} className="rounded-xl bg-red-600 px-4 py-3">
+                  <div className="font-semibold text-center">Failed: {result.filename}</div>
+                  {result.error && (
+                    <div className="text-sm text-red-100 mt-1 text-center">{result.error}</div>
+                  )}
                 </div>
               )
             ))}

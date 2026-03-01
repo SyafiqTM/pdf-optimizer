@@ -118,7 +118,22 @@ async def optimize_pdf(file: UploadFile = File(...), background_tasks: Backgroun
         )
     
     if file.content_type != "application/pdf":
-        return {"error": "Only PDF files allowed"}
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed"
+        )
+
+    # Read file content
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    
+    # Vercel has a 4.5MB request body limit
+    MAX_SIZE_MB = 4.0  # Set to 4MB to be safe with Vercel limits
+    if file_size_mb > MAX_SIZE_MB:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({file_size_mb:.2f}MB). Maximum allowed size is {MAX_SIZE_MB}MB due to serverless platform limits."
+        )
 
     job_id = str(uuid.uuid4())
 
@@ -126,9 +141,9 @@ async def optimize_pdf(file: UploadFile = File(...), background_tasks: Backgroun
     qpdf_path = os.path.join(TMP_DIR, f"{job_id}-qpdf.pdf")
     output_path = os.path.join(TMP_DIR, f"{job_id}-optimized.pdf")
 
-    # Save uploaded file
+    # Save uploaded file (content already read for size check)
     with open(input_path, "wb") as f:
-        f.write(await file.read())
+        f.write(content)
 
     # Step 1: qpdf (linearize + cleanup)
     run_cmd([
