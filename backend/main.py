@@ -127,9 +127,10 @@ async def optimize_pdf(file: UploadFile = File(...), background_tasks: Backgroun
     content = await file.read()
     file_size_mb = len(content) / (1024 * 1024)
     
-    # Vercel has a 4.5MB request body limit
-    MAX_SIZE_MB = 4.0  # Set to 4MB to be safe with Vercel limits
-    if file_size_mb > MAX_SIZE_MB:
+    # Vercel has a 4.5MB request body limit — only enforce when deployed there
+    IS_VERCEL = os.environ.get("FILE_SIZE_LIMIT") or False
+    MAX_SIZE_MB = 4.0  # Safe limit for Vercel's 4.5MB request body cap
+    if IS_VERCEL and file_size_mb > MAX_SIZE_MB:
         raise HTTPException(
             status_code=413,
             detail=f"File too large ({file_size_mb:.2f}MB). Maximum allowed size is {MAX_SIZE_MB}MB due to serverless platform limits."
